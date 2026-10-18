@@ -1,0 +1,56 @@
+{
+  "version": 1,
+  "description": "Políticas predeterminadas del Guardrail. El orden de prioridad determina la resolución de conflictos.",
+  "priority": [
+    "BLOCK",
+    "REVIEW",
+    "MASK",
+    "ALLOW"
+  ],
+  "rules": [
+    {
+      "name": "bloquear_inyeccion",
+      "categories": [
+        "injection",
+        "instruction_override",
+        "system_prompt_extraction",
+        "sensitive_data_request",
+        "jailbreak"
+      ],
+      "action": "BLOCK",
+      "category_prefixes": [
+        "injection:"
+      ]
+    },
+    {
+      "name": "bloquear_credenciales",
+      "categories": [
+        "credential",
+        "secrets"
+      ],
+      "action": "BLOCK"
+    },
+    {
+      "name": "revisar_riesgo_alto",
+      "severities": [
+        "high"
+      ],
+      "action": "REVIEW",
+      "exclude_categories": [
+        "injection",
+        "instruction_override",
+        "system_prompt_extraction",
+        "sensitive_data_request",
+        "jailbreak"
+      ]
+    },
+    {
+      "name": "enmascarar_datos_personales",
+      "category_prefixes": [
+        "pii:",
+        "email"
+      ],
+      "action": "MASK"
+    }
+  ]
+}

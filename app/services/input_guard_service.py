@@ -8,6 +8,7 @@ from app.detectors.injection import InjectionDetector
 from app.detectors.pii import PIIDetector
 from app.detectors.secrets import SecretsDetector
 from app.schemas.guardrail import Finding, GuardrailDecision, GuardrailEvaluationResponse
+from app.orchestrators.decision_orchestrator import DecisionOrchestrator
 
 
 class InputGuardService:
@@ -63,7 +64,8 @@ class InputGuardService:
         ),
     )
 
-    def __init__(self, detectors=None):
+    def __init__(self, detectors=None, policy_engine=None):
+        self.policy_engine = policy_engine or DecisionOrchestrator()
         self.detectors = detectors or [
             InjectionDetector(),
             PIIDetector(),
@@ -131,7 +133,6 @@ class InputGuardService:
         # 1. Reglas de entrada existentes.
         for category, pattern, description in self.RULES:
             if pattern.search(normalized):
-                print("RULE MATCH:", category, repr(normalized))
                 findings.append(Finding(
                     category=category,
                     severity="high",
@@ -142,14 +143,6 @@ class InputGuardService:
         detections = []
         for detector in self.detectors:
             detection = detector.detect(prompt)
-            print(
-                "DETECTOR:",
-                detector.name,
-                "detected=",
-                detection.detected,
-                "matches=",
-                detection.matches,
-            )
             detections.append(detection)
             if detection.detected:
                 findings.append(self._finding_from_detector(detector.name, detection))
@@ -192,13 +185,23 @@ class InputGuardService:
             or finding.category.startswith("injection:")
         ]
         if injection_findings:
+            # Consolidar en un solo hallazgo sin perder la categoría concreta
+            # que esperan los consumidores y las pruebas existentes.
+            preferred = next(
+                (finding for finding in injection_findings
+                 if finding.category in injection_categories),
+                next(
+                    (finding for finding in injection_findings
+                     if finding.category.startswith("injection:")),
+                    injection_findings[0],
+                ),
+            )
             findings = [
-                finding
-                for finding in findings
+                finding for finding in findings
                 if finding not in injection_findings
             ]
             findings.append(Finding(
-                category="injection",
+                category=preferred.category,
                 severity="high",
                 description=(
                     "Se detectó un posible intento de inyección o manipulación "
@@ -206,25 +209,20 @@ class InputGuardService:
                 ),
             ))
 
-        blocked = any(f.severity in ("high", "critical") for f in findings)
+        pii_detected = any(
+            detection.detector == "pii" and detection.detected
+            for detection in detections
+        )
+        decision = self.policy_engine.decide(findings, pii_detected=pii_detected)
 
-        # Inyección y secretos siempre bloquean. PII se sanea cuando no hay
-        # una amenaza de mayor prioridad.
-        if blocked:
-            decision, content = GuardrailDecision.BLOCK, None
-
-        else:
+        # Solo se transforma contenido para MASK. REVIEW y BLOCK son fail-closed:
+        # no se devuelve contenido para que un orquestador no pueda enviarlo al LLM.
+        if decision == GuardrailDecision.MASK:
             safe_content = prompt
-            pii_detected = False
-
             for detection in detections:
                 if detection.detector != "pii" or not detection.detected:
                     continue
-
-                pii_detected = True
-
-                # Reemplazar de derecha a izquierda para que los índices
-                # originales de los matches sigan siendo válidos.
+                # Reemplazar de derecha a izquierda mantiene válidos los índices.
                 for match in sorted(
                     detection.matches,
                     key=lambda m: m["start"],
@@ -232,22 +230,13 @@ class InputGuardService:
                 ):
                     start = match["start"]
                     end = match["end"]
-
-                    if match["type"] == "email":
-                        replacement = "[EMAIL]"
-                    else:
-                        replacement = f"[REDACTED:{match['type']}]"
-
-                    safe_content = (
-                        safe_content[:start]
-                        + replacement
-                        + safe_content[end:]
-                    )
-
-            if pii_detected:
-                decision, content = GuardrailDecision.MASK, safe_content
-            else:
-                decision, content = GuardrailDecision.ALLOW, prompt
+                    replacement = "[EMAIL]" if match["type"] == "email" else f"[REDACTED:{match['type']}]"
+                    safe_content = safe_content[:start] + replacement + safe_content[end:]
+            content = safe_content
+        elif decision == GuardrailDecision.ALLOW:
+            content = prompt
+        else:
+            content = None
         return GuardrailEvaluationResponse(
             request_id=request_id,
             decision=decision,

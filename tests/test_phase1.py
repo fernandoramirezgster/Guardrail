@@ -52,7 +52,7 @@ def use_llm(llm):
 
 
 def test_health(client):
-    assert client.get("/health").json()["phase"] == 1
+    assert client.get("/health").json()["phase"] == 4
 
 
 def test_input_allow(client):

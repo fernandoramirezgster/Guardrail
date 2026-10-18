@@ -5,6 +5,8 @@ from app.providers.llm_client import MockLLMClient, OpenAICompatibleClient
 from app.services.input_guard_service import InputGuardService
 from app.services.output_guard_service import OutputGuardService
 from app.services.secure_chat_service import SecureChatService
+from app.services.rag_context_service import RAGContextService
+from app.orchestrators.rag_orchestrator import RAGOrchestrator
 
 
 def get_input_guard_service():
@@ -22,6 +24,10 @@ def get_llm_client():
     if settings.llm_provider == "openai_compatible":
         return OpenAICompatibleClient(settings)
     raise HTTPException(status_code=503, detail="Proveedor LLM no configurado correctamente.")
+
+
+def get_rag_orchestrator():
+    return RAGOrchestrator(RAGContextService())
 
 
 def get_secure_chat_service(
