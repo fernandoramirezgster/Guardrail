@@ -1,0 +1,12 @@
+.git
+.gitignore
+.env
+.venv/
+tesisMesi/
+models/
+experiments/results/
+**/__pycache__/
+**/*.pyc
+.pytest_cache/
+Dockerfile
+docker-compose*.yml

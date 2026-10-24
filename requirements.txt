@@ -1,7 +1,44 @@
+# VigilAI - dependencias consolidadas en un solo archivo.
+# Instalación (PyTorch CPU por defecto):
+#   pip install -r requirements.txt --extra-index-url https://download.pytorch.org/whl/cpu
+# Versiones exactas de todo el entorno verificado: requirements-lock.txt
+
+# ---------------------------------------------------------------------------
+# API / servidor web (app/): endpoints del guardrail y validación de datos
+# ---------------------------------------------------------------------------
 fastapi==0.142.2
 uvicorn[standard]==0.54.0
 pydantic==2.13.5
-httpx==0.28.1
+
+# ---------------------------------------------------------------------------
+# Configuración (app/core/settings.py): lectura de variables desde .env
+# ---------------------------------------------------------------------------
 python-dotenv==1.2.3
-httpx2
-pytest>=8.0
+
+# ---------------------------------------------------------------------------
+# Cliente HTTP: llamadas HTTP y TestClient de FastAPI en las pruebas
+# ---------------------------------------------------------------------------
+httpx==0.28.1
+
+# ---------------------------------------------------------------------------
+# Clasificador de prompt injection (app/classifiers/, fase 2)
+# transformers se mantiene en 4.x: el código remoto de PIGuard (trust_remote_code)
+# y la API de tokenizadores usada se verificaron contra esa rama.
+# ---------------------------------------------------------------------------
+torch==2.14.1
+transformers==4.57.6
+tokenizers==0.22.2
+huggingface-hub==0.36.2
+sentencepiece==0.2.2
+protobuf==7.36.2
+
+# ---------------------------------------------------------------------------
+# Benchmark / evaluación (eval/run_benchmark.py, experiments/): descarga de
+# conjuntos de datos desde Hugging Face
+# ---------------------------------------------------------------------------
+datasets==5.0.1
+
+# ---------------------------------------------------------------------------
+# Pruebas (tests/)
+# ---------------------------------------------------------------------------
+pytest==9.1.1

@@ -1,0 +1,20 @@
+services:
+  api:
+    build: .
+    image: vigilai:phase2
+    ports:
+      - "127.0.0.1:8000:8000"
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      INJECTION_CLASSIFIER: ${INJECTION_CLASSIFIER:-none}
+      INJECTION_MODEL_PATH: ${INJECTION_MODEL_PATH:-}
+      INJECTION_CLASSIFIER_DEVICE: ${INJECTION_CLASSIFIER_DEVICE:-cpu}
+      MODELS_DIR: /models
+    volumes:
+      - ./models:/models:ro
+    read_only: true
+    tmpfs:
+      - /tmp
+    restart: unless-stopped

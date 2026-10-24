@@ -19,14 +19,10 @@ async def evaluate_input(request: InputEvaluationRequest, service=Depends(get_in
         )
 
     except Exception as e:
-        print("====================================")
-        print("ERROR EN GUARDRAIL:")
-        print(type(e).__name__)
-        print(str(e))
-        print("====================================")
-
+        # Falla cerrada sin exponer detalles internos (modelo, rutas, texto).
+        logger.error("Error en el guardrail de entrada: %s", type(e).__name__)
         raise HTTPException(
             status_code=503,
-            detail=str(e)
+            detail="La evaluación de entrada no pudo completarse.",
         ) from None
 

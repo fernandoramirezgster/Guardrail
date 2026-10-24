@@ -42,9 +42,9 @@ class SecureChatService:
             # instrucciones encontradas dentro de los documentos recuperados.
             safe_prompt = (
                 safe_prompt
-                + "\\n\\nCONTEXTO_RECUPERADO_NO_CONFIABLE_JSON:\\n"
+                + "\n\nCONTEXTO_RECUPERADO_NO_CONFIABLE_JSON:\n"
                 + context_result.context_for_llm
-                + "\\nFIN_CONTEXTO_RECUPERADO"
+                + "\nFIN_CONTEXTO_RECUPERADO"
             )
 
         model_output = await self.llm_client.generate(safe_prompt)

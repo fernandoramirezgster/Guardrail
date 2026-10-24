@@ -45,6 +45,13 @@
       ]
     },
     {
+      "name": "revisar_inyeccion_probable",
+      "categories": [
+        "injection_review"
+      ],
+      "action": "REVIEW"
+    },
+    {
       "name": "enmascarar_datos_personales",
       "category_prefixes": [
         "pii:",

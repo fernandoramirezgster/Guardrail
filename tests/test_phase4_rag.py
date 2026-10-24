@@ -100,3 +100,6 @@ def test_chat_sends_masked_context_as_untrusted_data(client):
     assert data["model_called"] is True
     assert "ficticio@example.test" not in llm.prompts[0]
     assert "CONTEXTO_RECUPERADO_NO_CONFIABLE_JSON" in llm.prompts[0]
+    # Saltos de línea reales, no la secuencia literal "\n".
+    assert "\nCONTEXTO_RECUPERADO_NO_CONFIABLE_JSON:\n" in llm.prompts[0]
+    assert "\\n" not in llm.prompts[0]

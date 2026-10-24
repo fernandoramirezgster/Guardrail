@@ -1,14 +1,24 @@
-"""Evaluación de entrada mediante los detectores del Guardrail de fase 1."""
+"""Evaluación de entrada: reglas, detectores y clasificador de prompt injection."""
 import html
+import logging
 import re
 import unicodedata
 from time import perf_counter
 
+from starlette.concurrency import run_in_threadpool
+
+from app.classifiers.base import NullClassifier
 from app.detectors.injection import InjectionDetector
 from app.detectors.pii import PIIDetector
 from app.detectors.secrets import SecretsDetector
 from app.schemas.guardrail import Finding, GuardrailDecision, GuardrailEvaluationResponse
 from app.orchestrators.decision_orchestrator import DecisionOrchestrator
+
+logger = logging.getLogger(__name__)
+
+INJECTION_DESCRIPTION = (
+    "Se detectó un posible intento de inyección o manipulación de instrucciones."
+)
 
 
 class InputGuardService:
@@ -64,13 +74,50 @@ class InputGuardService:
         ),
     )
 
-    def __init__(self, detectors=None, policy_engine=None):
+    def __init__(self, detectors=None, policy_engine=None, classifier=None,
+                 block_threshold=0.90, review_threshold=0.50):
+        if not 0.0 <= review_threshold <= block_threshold <= 1.0:
+            raise ValueError("Se requiere 0 <= review_threshold <= block_threshold <= 1.")
         self.policy_engine = policy_engine or DecisionOrchestrator()
         self.detectors = detectors or [
             InjectionDetector(),
             PIIDetector(),
             SecretsDetector(),
         ]
+        self.classifier = classifier or NullClassifier()
+        self.block_threshold = block_threshold
+        self.review_threshold = review_threshold
+
+    async def _classifier_finding(self, prompt: str):
+        """Ejecuta el clasificador fuera del event loop y traduce su puntuación
+        en un hallazgo; la acción la decide el motor de políticas."""
+        if not self.classifier.enabled:
+            return None
+        # Los modelos se entrenaron con texto original, no con la versión normalizada.
+        result = await run_in_threadpool(self.classifier.classify, prompt)
+        score = result.score_injection
+        logger.info(
+            "classifier=%s score=%.4f chunks=%d latency_ms=%.1f",
+            result.model_id, score, result.chunk_count, result.latency_ms,
+        )
+        if score >= self.block_threshold:
+            return Finding(
+                category="injection:classifier",
+                severity="high",
+                description=INJECTION_DESCRIPTION,
+            )
+        if score >= self.review_threshold:
+            return Finding(
+                # Sin prefijo "injection:" para que no se consolide ni lo capture
+                # bloquear_inyeccion; la regla revisar_inyeccion_probable lo envía a REVIEW.
+                category="injection_review",
+                severity="medium",
+                description=(
+                    "El clasificador asignó una probabilidad intermedia de inyección; "
+                    "la entrada requiere revisión."
+                ),
+            )
+        return None
 
     @staticmethod
     def normalize_for_detection(content: str) -> str:
@@ -133,6 +180,7 @@ class InputGuardService:
         # 1. Reglas de entrada existentes.
         for category, pattern, description in self.RULES:
             if pattern.search(normalized):
+                logger.info("rule_match=%s", category)
                 findings.append(Finding(
                     category=category,
                     severity="high",
@@ -143,6 +191,13 @@ class InputGuardService:
         detections = []
         for detector in self.detectors:
             detection = detector.detect(prompt)
+            # No registrar los valores encontrados: pueden contener datos sensibles.
+            logger.info(
+                "detector=%s detected=%s match_types=%s",
+                detector.name,
+                detection.detected,
+                sorted({m["type"] for m in detection.matches}),
+            )
             detections.append(detection)
             if detection.detected:
                 findings.append(self._finding_from_detector(detector.name, detection))
@@ -167,7 +222,14 @@ class InputGuardService:
                 )
             )
 
-        # 3. Consolidar señales de inyección.
+        # 3. Clasificador de prompt injection (fase 2). Se agrega antes de
+        # consolidar para que un bloqueo del modelo y de las reglas cuente
+        # como un solo evento de inyección.
+        classifier_finding = await self._classifier_finding(prompt)
+        if classifier_finding:
+            findings.append(classifier_finding)
+
+        # 4. Consolidar señales de inyección.
         # Una misma entrada puede activar varias reglas (por ejemplo,
         # instruction_override + system_prompt_extraction + el detector
         # especializado). Todas describen el mismo evento de seguridad y no

@@ -1,4 +1,4 @@
-# GenAI Guardrail — Fases 1 a 4
+# GenAI Guardrail — VigilAI (fases 1 a 4)
 
 Servicio FastAPI para evaluar entrada/salida, aplicar políticas configurables y proteger contexto RAG antes de enviarlo al proveedor LLM.
 Python 3.11 o superior. La prueba del paquete se ejecutó con Python 3.12.
@@ -10,7 +10,10 @@ Python 3.11 o superior. La prueba del paquete se ejecutó con Python 3.12.
 | `app/schemas` | Contratos y validación de datos | `guardrail.py`, `chat.py`, `rag.py` |
 | `app/services` | Evaluar entrada/salida, chat y contexto RAG | `input_guard_service.py`, `output_guard_service.py`, `secure_chat_service.py`, `rag_context_service.py` |
 | `app/providers` | Simulador y adaptador del proveedor real | `llm_client.py` |
-| `app/core` | Configuración y dependencias | `settings.py`, `dependencies.py` |\n| `app/policies` | Reglas JSON configurables y motor de decisiones | `default_policy.json`, `engine.py` |\n| `app/orchestrators` | Orquestación de políticas y flujo RAG | `decision_orchestrator.py`, `rag_orchestrator.py` |
+| `app/core` | Configuración y dependencias | `settings.py`, `dependencies.py` |
+| `app/policies` | Reglas JSON configurables y motor de decisiones | `default_policy.json`, `engine.py` |
+| `app/orchestrators` | Orquestación de políticas y flujo RAG | `decision_orchestrator.py`, `rag_orchestrator.py` |
+| `app/classifiers` | Clasificador de prompt injection (Prompt Guard 2 / PIGuard) | `base.py`, `hf_classifier.py`, `registry.py` |
 | `app/api` | Rutas HTTP | `input_guard.py`, `output_guard.py`, `chat.py`, `rag_guard.py` |
 | `tests` | Pruebas automatizadas del flujo | `test_phase1.py` |
 
@@ -26,7 +29,7 @@ No necesitas activar el entorno virtual ni cambiar la política de PowerShell:
 
 ```powershell
 py -3 -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
 Copy-Item .env.example .env
 .\.venv\Scripts\python.exe -m pytest -q
 .\.venv\Scripts\python.exe -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
@@ -124,6 +127,63 @@ No hay autenticación, autorización, conexión a una base vectorial, groundedne
 Usar únicamente como laboratorio local en esta fase.
 No se aceptan `allowed_destinations` ni documentos RAG para evitar prometer controles
 que todavía no existen. Los contratos de esos controles se añadirán en sus fases.
+
+## Fase 2 — Clasificador de prompt injection
+
+La entrada combina las reglas de la fase 1 con un clasificador entrenado,
+seleccionable en `.env` (`app/classifiers/`):
+
+| `INJECTION_CLASSIFIER` | Modelo | Notas |
+| --- | --- | --- |
+| `none` (por defecto) | — | Solo reglas; mismo comportamiento que la fase 1. |
+| `prompt_guard` | `meta-llama/Llama-Prompt-Guard-2-86M` | Multilingüe (mDeBERTa). Requiere aceptar la licencia en Hugging Face. |
+| `piguard` | `leolee99/PIGuard` | DeBERTa-v3 (ACL 2025), entrenado para reducir la sobre-defensa; principalmente inglés. |
+
+El clasificador solo produce hallazgos; la acción la decide el motor de políticas (fase 3):
+
+- Puntuación `>= INJECTION_BLOCK_THRESHOLD` (0.90) → hallazgo `injection:classifier`; la regla
+  `bloquear_inyeccion` lo convierte en `BLOCK`. Si también coincide una regla de texto, se
+  consolida en un solo hallazgo de inyección.
+- Entre `INJECTION_REVIEW_THRESHOLD` (0.50) y el umbral de bloqueo → hallazgo `injection_review`;
+  la regla `revisar_inyeccion_probable` de `default_policy.json` lo envía a `REVIEW`.
+  Cambiar esa acción en la política permite, por ejemplo, bloquear también esa franja.
+- Las reglas de texto siguen bloqueando aunque el clasificador considere benigno el texto.
+- Los fragmentos RAG (fase 4) pasan por el mismo guard de entrada, tanto en `/api/v1/chat` como
+  en `/api/v1/guardrails/rag/evaluate`, de modo que el clasificador también detecta inyecciones
+  indirectas en documentos recuperados.
+- Los prompts de más de 512 tokens se dividen en ventanas solapadas; cuenta la puntuación máxima.
+- El modelo se carga una sola vez al arrancar; si no carga, la API no arranca (falla cerrada).
+
+### Docker (recomendado)
+
+Imagen CPU; los modelos se descargan una vez y se montan en solo lectura,
+sin acceso a la red en tiempo de ejecución (`HF_HUB_OFFLINE=1`):
+
+```powershell
+pip install huggingface_hub
+$env:HF_TOKEN = "<token de Hugging Face>"
+python scripts/download_models.py
+docker compose up --build
+```
+
+Para activar un modelo, define `INJECTION_CLASSIFIER=prompt_guard` (o `piguard`) en `.env`
+y reinicia. `GET /health` indica el clasificador cargado. Pruebas con los modelos reales:
+`docker compose run --rm api pytest -m models`. GPU opcional:
+`docker compose -f docker-compose.yml -f docker-compose.gpu.yml up --build`.
+
+### Benchmark
+
+```powershell
+pip install -r requirements.txt --extra-index-url https://download.pytorch.org/whl/cpu
+python -m experiments.run_benchmark --models prompt_guard piguard --models-dir ./models `
+    --datasets es_custom deepset notinject jailbreak
+```
+
+Compara reglas, cada modelo y cada híbrido (reglas OR modelo): TPR, FPR, ASR residual,
+precisión, F1, ROC-AUC y latencia p50/p95, por idioma y conjunto, más un barrido de
+umbrales (`sweep.csv`) para elegir `block`/`review`. Resultados en `experiments/results/`.
+`datasets/es_custom.csv` es un conjunto propio en español con negativos difíciles
+(textos benignos con palabras gatillo).
 
 ## Criterio de cierre de la fase 1
 
